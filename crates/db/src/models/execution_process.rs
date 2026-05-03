@@ -10,6 +10,7 @@ use serde_json::Value;
 use sqlx::{FromRow, SqlitePool, Type};
 use thiserror::Error;
 use ts_rs::TS;
+use utils::process::ProcessIdentity;
 use uuid::Uuid;
 
 use super::{
@@ -50,6 +51,18 @@ pub enum ExecutionProcessStatus {
 }
 
 #[derive(Debug, Clone, Type, Serialize, Deserialize, PartialEq, TS)]
+#[sqlx(
+    type_name = "execution_process_recovery_reason",
+    rename_all = "snake_case"
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionProcessRecoveryReason {
+    RecoveredRunning,
+    RecoveryOrphaned,
+    RecoveryExitUnknown,
+}
+
+#[derive(Debug, Clone, Type, Serialize, Deserialize, PartialEq, TS)]
 #[sqlx(type_name = "execution_process_run_reason", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum ExecutionProcessRunReason {
@@ -69,14 +82,18 @@ pub struct ExecutionProcess {
     pub executor_action: sqlx::types::Json<ExecutorActionField>,
     pub status: ExecutionProcessStatus,
     pub exit_code: Option<i64>,
-    /// dropped: true if this process is excluded from the current
-    /// history view (due to restore/trimming). Hidden from logs/timeline;
-    /// still listed in the Processes tab.
+    pub os_pid: Option<i64>,
+    pub process_group_id: Option<i64>,
+    pub command_snapshot: Option<String>,
+    pub argv_snapshot: Option<String>,
+    pub recovery_reason: Option<ExecutionProcessRecoveryReason>,
     pub dropped: bool,
     pub started_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub log_bytes_written: i64,
+    pub log_truncated: bool,
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -144,11 +161,18 @@ impl ExecutionProcess {
                     ep.executor_action as "executor_action!: sqlx::types::Json<ExecutorActionField>",
                     ep.status as "status!: ExecutionProcessStatus",
                     ep.exit_code,
+                    ep.os_pid,
+                    ep.process_group_id,
+                    ep.command_snapshot,
+                    ep.argv_snapshot,
+                    ep.recovery_reason as "recovery_reason?: ExecutionProcessRecoveryReason",
                     ep.dropped as "dropped!: bool",
                     ep.started_at as "started_at!: DateTime<Utc>",
                     ep.completed_at as "completed_at?: DateTime<Utc>",
                     ep.created_at as "created_at!: DateTime<Utc>",
-                    ep.updated_at as "updated_at!: DateTime<Utc>"
+                    ep.updated_at as "updated_at!: DateTime<Utc>",
+                    ep.log_bytes_written as "log_bytes_written!: i64",
+                    ep.log_truncated as "log_truncated!: bool"
                FROM execution_processes ep WHERE ep.id = ?"#,
             id
         )
@@ -218,11 +242,18 @@ impl ExecutionProcess {
                     ep.executor_action as "executor_action!: sqlx::types::Json<ExecutorActionField>",
                     ep.status as "status!: ExecutionProcessStatus",
                     ep.exit_code,
+                    ep.os_pid,
+                    ep.process_group_id,
+                    ep.command_snapshot,
+                    ep.argv_snapshot,
+                    ep.recovery_reason as "recovery_reason?: ExecutionProcessRecoveryReason",
                     ep.dropped as "dropped!: bool",
                     ep.started_at as "started_at!: DateTime<Utc>",
                     ep.completed_at as "completed_at?: DateTime<Utc>",
                     ep.created_at as "created_at!: DateTime<Utc>",
-                    ep.updated_at as "updated_at!: DateTime<Utc>"
+                    ep.updated_at as "updated_at!: DateTime<Utc>",
+                    ep.log_bytes_written as "log_bytes_written!: i64",
+                    ep.log_truncated as "log_truncated!: bool"
                FROM execution_processes ep WHERE ep.rowid = ?"#,
             rowid
         )
@@ -245,11 +276,18 @@ impl ExecutionProcess {
                       ep.executor_action as "executor_action!: sqlx::types::Json<ExecutorActionField>",
                       ep.status          as "status!: ExecutionProcessStatus",
                       ep.exit_code,
+                      ep.os_pid,
+                      ep.process_group_id,
+                      ep.command_snapshot,
+                      ep.argv_snapshot,
+                      ep.recovery_reason as "recovery_reason?: ExecutionProcessRecoveryReason",
                       ep.dropped as "dropped!: bool",
                       ep.started_at      as "started_at!: DateTime<Utc>",
                       ep.completed_at    as "completed_at?: DateTime<Utc>",
                       ep.created_at      as "created_at!: DateTime<Utc>",
-                      ep.updated_at      as "updated_at!: DateTime<Utc>"
+                      ep.updated_at      as "updated_at!: DateTime<Utc>",
+                      ep.log_bytes_written as "log_bytes_written!: i64",
+                      ep.log_truncated as "log_truncated!: bool"
                FROM execution_processes ep
                WHERE ep.session_id = ?
                  AND (? OR ep.dropped = FALSE)
@@ -272,11 +310,18 @@ impl ExecutionProcess {
                     ep.executor_action as "executor_action!: sqlx::types::Json<ExecutorActionField>",
                     ep.status as "status!: ExecutionProcessStatus",
                     ep.exit_code,
+                    ep.os_pid,
+                    ep.process_group_id,
+                    ep.command_snapshot,
+                    ep.argv_snapshot,
+                    ep.recovery_reason as "recovery_reason?: ExecutionProcessRecoveryReason",
                     ep.dropped as "dropped!: bool",
                     ep.started_at as "started_at!: DateTime<Utc>",
                     ep.completed_at as "completed_at?: DateTime<Utc>",
                     ep.created_at as "created_at!: DateTime<Utc>",
-                    ep.updated_at as "updated_at!: DateTime<Utc>"
+                    ep.updated_at as "updated_at!: DateTime<Utc>",
+                    ep.log_bytes_written as "log_bytes_written!: i64",
+                    ep.log_truncated as "log_truncated!: bool"
                FROM execution_processes ep WHERE ep.status = 'running' ORDER BY ep.created_at ASC"#,
         )
         .fetch_all(pool)
@@ -292,7 +337,10 @@ impl ExecutionProcess {
             ExecutionProcess,
             r#"SELECT ep.id as "id!: Uuid", ep.session_id as "session_id!: Uuid", ep.run_reason as "run_reason!: ExecutionProcessRunReason", ep.executor_action as "executor_action!: sqlx::types::Json<ExecutorActionField>",
                       ep.status as "status!: ExecutionProcessStatus", ep.exit_code,
-                      ep.dropped as "dropped!: bool", ep.started_at as "started_at!: DateTime<Utc>", ep.completed_at as "completed_at?: DateTime<Utc>", ep.created_at as "created_at!: DateTime<Utc>", ep.updated_at as "updated_at!: DateTime<Utc>"
+                      ep.os_pid, ep.process_group_id, ep.command_snapshot, ep.argv_snapshot,
+                      ep.recovery_reason as "recovery_reason?: ExecutionProcessRecoveryReason",
+                      ep.dropped as "dropped!: bool", ep.started_at as "started_at!: DateTime<Utc>", ep.completed_at as "completed_at?: DateTime<Utc>", ep.created_at as "created_at!: DateTime<Utc>", ep.updated_at as "updated_at!: DateTime<Utc>",
+                      ep.log_bytes_written as "log_bytes_written!: i64", ep.log_truncated as "log_truncated!: bool"
                FROM execution_processes ep
                JOIN sessions s ON ep.session_id = s.id
                JOIN workspaces w ON s.workspace_id = w.id
@@ -339,11 +387,18 @@ impl ExecutionProcess {
             ep.executor_action as "executor_action!: sqlx::types::Json<ExecutorActionField>",
             ep.status as "status!: ExecutionProcessStatus",
             ep.exit_code,
+            ep.os_pid,
+            ep.process_group_id,
+            ep.command_snapshot,
+            ep.argv_snapshot,
+            ep.recovery_reason as "recovery_reason?: ExecutionProcessRecoveryReason",
             ep.dropped as "dropped!: bool",
             ep.started_at as "started_at!: DateTime<Utc>",
             ep.completed_at as "completed_at?: DateTime<Utc>",
             ep.created_at as "created_at!: DateTime<Utc>",
-            ep.updated_at as "updated_at!: DateTime<Utc>"
+            ep.updated_at as "updated_at!: DateTime<Utc>",
+            ep.log_bytes_written as "log_bytes_written!: i64",
+            ep.log_truncated as "log_truncated!: bool"
         FROM execution_processes ep
         JOIN sessions s ON ep.session_id = s.id
         WHERE s.workspace_id = ?
@@ -372,11 +427,18 @@ impl ExecutionProcess {
                     ep.executor_action as "executor_action!: sqlx::types::Json<ExecutorActionField>",
                     ep.status as "status!: ExecutionProcessStatus",
                     ep.exit_code,
+                    ep.os_pid,
+                    ep.process_group_id,
+                    ep.command_snapshot,
+                    ep.argv_snapshot,
+                    ep.recovery_reason as "recovery_reason?: ExecutionProcessRecoveryReason",
                     ep.dropped as "dropped!: bool",
                     ep.started_at as "started_at!: DateTime<Utc>",
                     ep.completed_at as "completed_at?: DateTime<Utc>",
                     ep.created_at as "created_at!: DateTime<Utc>",
-                    ep.updated_at as "updated_at!: DateTime<Utc>"
+                    ep.updated_at as "updated_at!: DateTime<Utc>",
+                    ep.log_bytes_written as "log_bytes_written!: i64",
+                    ep.log_truncated as "log_truncated!: bool"
                FROM execution_processes ep
                WHERE ep.session_id = ? AND ep.run_reason = ? AND ep.dropped = FALSE
                ORDER BY ep.created_at DESC LIMIT 1"#,
@@ -402,11 +464,18 @@ impl ExecutionProcess {
                     ep.executor_action as "executor_action!: sqlx::types::Json<ExecutorActionField>",
                     ep.status as "status!: ExecutionProcessStatus",
                     ep.exit_code,
+                    ep.os_pid,
+                    ep.process_group_id,
+                    ep.command_snapshot,
+                    ep.argv_snapshot,
+                    ep.recovery_reason as "recovery_reason?: ExecutionProcessRecoveryReason",
                     ep.dropped as "dropped!: bool",
                     ep.started_at as "started_at!: DateTime<Utc>",
                     ep.completed_at as "completed_at?: DateTime<Utc>",
                     ep.created_at as "created_at!: DateTime<Utc>",
-                    ep.updated_at as "updated_at!: DateTime<Utc>"
+                    ep.updated_at as "updated_at!: DateTime<Utc>",
+                    ep.log_bytes_written as "log_bytes_written!: i64",
+                    ep.log_truncated as "log_truncated!: bool"
                FROM execution_processes ep
                JOIN sessions s ON ep.session_id = s.id
                WHERE s.workspace_id = ? AND ep.run_reason = ? AND ep.dropped = FALSE
@@ -479,10 +548,11 @@ impl ExecutionProcess {
         status: ExecutionProcessStatus,
         exit_code: Option<i64>,
     ) -> Result<(), sqlx::Error> {
+        let updated_at = Utc::now();
         let completed_at = if matches!(status, ExecutionProcessStatus::Running) {
             None
         } else {
-            Some(Utc::now())
+            Some(updated_at)
         };
 
         sqlx::query!(
@@ -492,6 +562,98 @@ impl ExecutionProcess {
             status,
             exit_code,
             completed_at,
+            id
+        )
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn update_completion_with_recovery_reason(
+        pool: &SqlitePool,
+        id: Uuid,
+        status: ExecutionProcessStatus,
+        exit_code: Option<i64>,
+        recovery_reason: ExecutionProcessRecoveryReason,
+    ) -> Result<(), sqlx::Error> {
+        let updated_at = Utc::now();
+        let completed_at = if matches!(status, ExecutionProcessStatus::Running) {
+            None
+        } else {
+            Some(updated_at)
+        };
+
+        sqlx::query!(
+            r#"UPDATE execution_processes
+               SET status = $1,
+                   exit_code = $2,
+                   completed_at = $3,
+                   recovery_reason = $4,
+                   updated_at = $5
+               WHERE id = $6"#,
+            status,
+            exit_code,
+            completed_at,
+            recovery_reason,
+            updated_at,
+            id
+        )
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn record_process_identity(
+        pool: &SqlitePool,
+        id: Uuid,
+        identity: &ProcessIdentity,
+    ) -> Result<(), sqlx::Error> {
+        let argv_snapshot = identity
+            .argv_snapshot
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|err| sqlx::Error::Encode(Box::new(err)))?;
+        let os_pid = i64::from(identity.os_pid);
+        let process_group_id = identity.process_group_id.map(i64::from);
+        let command_snapshot = identity.command_snapshot.as_deref();
+        let updated_at = Utc::now();
+
+        sqlx::query!(
+            r#"UPDATE execution_processes
+               SET os_pid = $1,
+                   process_group_id = $2,
+                   command_snapshot = $3,
+                   argv_snapshot = $4,
+                   updated_at = $5
+               WHERE id = $6"#,
+            os_pid,
+            process_group_id,
+            command_snapshot,
+            argv_snapshot,
+            updated_at,
+            id
+        )
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn update_recovery_reason(
+        pool: &SqlitePool,
+        id: Uuid,
+        recovery_reason: ExecutionProcessRecoveryReason,
+    ) -> Result<(), sqlx::Error> {
+        let updated_at = Utc::now();
+        sqlx::query!(
+            r#"UPDATE execution_processes
+               SET recovery_reason = $1, updated_at = $2
+               WHERE id = $3"#,
+            recovery_reason,
+            updated_at,
             id
         )
         .execute(pool)
@@ -629,11 +791,18 @@ impl ExecutionProcess {
                     ep.executor_action as "executor_action!: sqlx::types::Json<ExecutorActionField>",
                     ep.status as "status!: ExecutionProcessStatus",
                     ep.exit_code,
+                    ep.os_pid,
+                    ep.process_group_id,
+                    ep.command_snapshot,
+                    ep.argv_snapshot,
+                    ep.recovery_reason as "recovery_reason?: ExecutionProcessRecoveryReason",
                     ep.dropped as "dropped!: bool",
                     ep.started_at as "started_at!: DateTime<Utc>",
                     ep.completed_at as "completed_at?: DateTime<Utc>",
                     ep.created_at as "created_at!: DateTime<Utc>",
-                    ep.updated_at as "updated_at!: DateTime<Utc>"
+                    ep.updated_at as "updated_at!: DateTime<Utc>",
+                    ep.log_bytes_written as "log_bytes_written!: i64",
+                    ep.log_truncated as "log_truncated!: bool"
                FROM execution_processes ep
                WHERE ep.session_id = ? AND ep.run_reason = ? AND ep.dropped = FALSE
                ORDER BY ep.created_at DESC LIMIT 1"#,

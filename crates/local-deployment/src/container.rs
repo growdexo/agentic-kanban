@@ -14,7 +14,8 @@ use db::{
     models::{
         coding_agent_turn::CodingAgentTurn,
         execution_process::{
-            ExecutionContext, ExecutionProcess, ExecutionProcessRunReason, ExecutionProcessStatus,
+            ExecutionContext, ExecutionProcess, ExecutionProcessRecoveryReason,
+            ExecutionProcessRunReason, ExecutionProcessStatus,
         },
         execution_process_repo_state::ExecutionProcessRepoState,
         repo::Repo,
@@ -43,7 +44,7 @@ use serde_json::json;
 use services::services::{
     analytics::AnalyticsContext,
     approvals::{Approvals, executor_approvals::ExecutorApprovalBridge},
-    config::{Config, DEFAULT_COMMIT_REMINDER_PROMPT},
+    config::{Config, DEFAULT_COMMIT_REMINDER_PROMPT, DEFAULT_MAX_LOG_BYTES_PER_EXECUTION},
     container::{ContainerError, ContainerRef, ContainerService},
     diff_stream::{self, DiffStreamHandle},
     image::ImageService,
@@ -58,6 +59,7 @@ use tokio_util::io::ReaderStream;
 use utils::{
     log_msg::LogMsg,
     msg_store::MsgStore,
+    process::{ProcessRecoveryCheck, capture_process_identity, check_process_for_recovery},
     text::{git_branch_id, short_uuid, truncate_to_char_boundary},
 };
 use uuid::Uuid;
@@ -999,6 +1001,13 @@ impl ContainerService for LocalContainerService {
         self.config.read().await.git_branch_prefix.clone()
     }
 
+    fn max_log_bytes_per_execution(&self) -> i64 {
+        self.config
+            .try_read()
+            .map(|config| config.max_log_bytes_per_execution.min(i64::MAX as u64) as i64)
+            .unwrap_or(DEFAULT_MAX_LOG_BYTES_PER_EXECUTION as i64)
+    }
+
     fn workspace_to_current_dir(&self, workspace: &Workspace) -> PathBuf {
         PathBuf::from(workspace.container_ref.clone().unwrap_or_default())
     }
@@ -1220,6 +1229,27 @@ impl ContainerService for LocalContainerService {
             ))
         })??;
 
+        if let Some(identity) = capture_process_identity(spawned.child.inner().id()) {
+            if let Err(err) = ExecutionProcess::record_process_identity(
+                &self.db.pool,
+                execution_process.id,
+                &identity,
+            )
+            .await
+            {
+                tracing::warn!(
+                    "Failed to record process identity for execution {}: {}",
+                    execution_process.id,
+                    err
+                );
+            }
+        } else {
+            tracing::warn!(
+                "Spawned execution {} without an OS pid",
+                execution_process.id
+            );
+        }
+
         self.track_child_msgs_in_store(execution_process.id, &mut spawned.child)
             .await;
 
@@ -1323,6 +1353,72 @@ impl ContainerService for LocalContainerService {
         self.update_after_head_commits(execution_process.id).await;
 
         Ok(())
+    }
+
+    fn spawn_recovered_process_monitor(&self, execution_process: &ExecutionProcess) {
+        let Some(pid) = execution_process.os_pid else {
+            return;
+        };
+        if u32::try_from(pid).is_err() {
+            return;
+        }
+
+        let process_id = execution_process.id;
+        let command_snapshot = execution_process.command_snapshot.clone();
+        let db = self.db.clone();
+        let container = self.clone();
+
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+
+                match check_process_for_recovery(Some(pid), command_snapshot.as_deref()) {
+                    ProcessRecoveryCheck::AliveMatched => continue,
+                    ProcessRecoveryCheck::CommandMismatch { .. } => {
+                        if !ExecutionProcess::was_stopped(&db.pool, process_id).await
+                            && let Err(err) =
+                                ExecutionProcess::update_completion_with_recovery_reason(
+                                    &db.pool,
+                                    process_id,
+                                    ExecutionProcessStatus::Killed,
+                                    None,
+                                    ExecutionProcessRecoveryReason::RecoveryOrphaned,
+                                )
+                                .await
+                        {
+                            tracing::error!(
+                                "Failed to mark recovered execution {} as orphaned: {}",
+                                process_id,
+                                err
+                            );
+                        }
+                        break;
+                    }
+                    ProcessRecoveryCheck::MissingPid | ProcessRecoveryCheck::Dead => {
+                        if !ExecutionProcess::was_stopped(&db.pool, process_id).await
+                            && let Err(err) =
+                                ExecutionProcess::update_completion_with_recovery_reason(
+                                    &db.pool,
+                                    process_id,
+                                    ExecutionProcessStatus::Killed,
+                                    None,
+                                    ExecutionProcessRecoveryReason::RecoveryExitUnknown,
+                                )
+                                .await
+                        {
+                            tracing::error!(
+                                "Failed to mark recovered execution {} as exited: {}",
+                                process_id,
+                                err
+                            );
+                        }
+                        break;
+                    }
+                }
+            }
+
+            container.update_after_head_commits(process_id).await;
+        });
     }
 
     async fn stream_diff(

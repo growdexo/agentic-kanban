@@ -24,6 +24,28 @@ import {
   REMAINING_BATCH_SIZE,
 } from './constants';
 
+type LogTruncationFields = {
+  log_bytes_written?: number | bigint;
+  log_truncated?: boolean;
+};
+
+const makeLogTruncationPatch = (
+  executionProcess: LogTruncationFields,
+  executionProcessId: string
+): PatchTypeWithKey => {
+  const bytes = executionProcess.log_bytes_written ?? 0;
+  return {
+    type: 'NORMALIZED_ENTRY',
+    content: {
+      entry_type: { type: 'system_message' },
+      content: `Logs truncated at ${bytes} bytes.`,
+      timestamp: null,
+    },
+    patchKey: `${executionProcessId}:log-truncated`,
+    executionProcessId,
+  };
+};
+
 export const useConversationHistoryOld = ({
   attempt,
   onEntriesUpdated,
@@ -208,6 +230,14 @@ export const useConversationHistoryOld = ({
             }
 
             entries.push(...filteredEntries);
+            if (p.executionProcess.log_truncated) {
+              entries.push(
+                makeLogTruncationPatch(
+                  p.executionProcess,
+                  p.executionProcess.id
+                )
+              );
+            }
 
             const liveProcessStatus = getLiveExecutionProcess(
               p.executionProcess.id
@@ -333,6 +363,14 @@ export const useConversationHistoryOld = ({
             );
 
             entries.push(toolPatchWithKey);
+            if (p.executionProcess.log_truncated) {
+              entries.push(
+                makeLogTruncationPatch(
+                  p.executionProcess,
+                  p.executionProcess.id
+                )
+              );
+            }
           }
 
           return entries;
@@ -510,6 +548,7 @@ export const useConversationHistoryOld = ({
   );
 
   const ensureProcessVisible = useCallback((p: ExecutionProcess) => {
+    const logFields = p as ExecutionProcess & LogTruncationFields;
     mergeIntoDisplayed((state) => {
       if (!state[p.id]) {
         state[p.id] = {
@@ -518,6 +557,8 @@ export const useConversationHistoryOld = ({
             created_at: p.created_at,
             updated_at: p.updated_at,
             executor_action: p.executor_action,
+            log_bytes_written: logFields.log_bytes_written,
+            log_truncated: logFields.log_truncated,
           },
           entries: [],
         };

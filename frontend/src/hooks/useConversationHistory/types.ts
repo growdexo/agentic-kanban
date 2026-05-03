@@ -85,6 +85,8 @@ export type ExecutionProcessStaticInfo = {
   created_at: string;
   updated_at: string;
   executor_action: ExecutorAction;
+  log_bytes_written?: number | bigint;
+  log_truncated?: boolean;
 };
 
 export type ExecutionProcessState = {

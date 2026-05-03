@@ -32,8 +32,6 @@ async fn main() -> Result<(), VibeKanbanError> {
         .install_default()
         .expect("Failed to install rustls crypto provider");
 
-    sentry_utils::init_once(SentrySource::Backend);
-
     let log_level = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
     let filter_string = format!(
         "warn,server={level},services={level},db={level},executors={level},deployment={level},local_deployment={level},utils={level}",
@@ -51,7 +49,10 @@ async fn main() -> Result<(), VibeKanbanError> {
     }
 
     let deployment = DeploymentImpl::new().await?;
-    deployment.update_sentry_scope().await?;
+    if deployment.config().read().await.analytics_enabled {
+        sentry_utils::init_once(SentrySource::Backend);
+        deployment.update_sentry_scope().await?;
+    }
     deployment
         .container()
         .cleanup_orphan_executions()

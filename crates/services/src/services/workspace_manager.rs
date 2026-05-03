@@ -191,14 +191,15 @@ impl WorkspaceManager {
         WorktreeManager::batch_cleanup_worktrees(&cleanup_data).await?;
 
         // Remove the workspace directory itself
-        if workspace_dir.exists()
-            && let Err(e) = tokio::fs::remove_dir_all(workspace_dir).await
-        {
-            debug!(
-                "Could not remove workspace directory {}: {}",
-                workspace_dir.display(),
-                e
-            );
+        if workspace_dir.exists() {
+            WorktreeManager::assert_path_under_worktree_base(workspace_dir)?;
+            if let Err(e) = tokio::fs::remove_dir_all(workspace_dir).await {
+                debug!(
+                    "Could not remove workspace directory {}: {}",
+                    workspace_dir.display(),
+                    e
+                );
+            }
         }
 
         Ok(())
@@ -256,6 +257,7 @@ impl WorkspaceManager {
         WorktreeManager::move_worktree(&repo.path, &temp_path, &expected_worktree_path).await?;
 
         if temp_path.exists() {
+            WorktreeManager::assert_path_under_worktree_base(&temp_path)?;
             let _ = tokio::fs::remove_dir_all(&temp_path).await;
         }
 
@@ -370,6 +372,7 @@ impl WorkspaceManager {
                     workspace_dir.display(),
                     e
                 );
+                WorktreeManager::assert_path_under_worktree_base(workspace_dir)?;
                 return tokio::fs::remove_dir_all(workspace_dir)
                     .await
                     .map_err(WorkspaceError::Io);
@@ -385,14 +388,15 @@ impl WorkspaceManager {
             }
         }
 
-        if workspace_dir.exists()
-            && let Err(e) = tokio::fs::remove_dir_all(workspace_dir).await
-        {
-            debug!(
-                "Could not remove workspace directory {}: {}",
-                workspace_dir.display(),
-                e
-            );
+        if workspace_dir.exists() {
+            WorktreeManager::assert_path_under_worktree_base(workspace_dir)?;
+            if let Err(e) = tokio::fs::remove_dir_all(workspace_dir).await {
+                debug!(
+                    "Could not remove workspace directory {}: {}",
+                    workspace_dir.display(),
+                    e
+                );
+            }
         }
 
         Ok(())

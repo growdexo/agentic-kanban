@@ -21,6 +21,12 @@ fn default_commit_reminder_enabled() -> bool {
     true
 }
 
+pub const DEFAULT_MAX_LOG_BYTES_PER_EXECUTION: u64 = 50 * 1024 * 1024;
+
+fn default_max_log_bytes_per_execution() -> u64 {
+    DEFAULT_MAX_LOG_BYTES_PER_EXECUTION
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub enum SendMessageShortcut {
     #[default]
@@ -62,12 +68,13 @@ pub struct Config {
     pub commit_reminder_prompt: Option<String>,
     #[serde(default)]
     pub send_message_shortcut: SendMessageShortcut,
+    #[serde(default = "default_max_log_bytes_per_execution")]
+    pub max_log_bytes_per_execution: u64,
 }
 
 impl Config {
     fn from_v7_config(old_config: v7::Config) -> Self {
-        // Convert Option<bool> to bool: None or Some(true) become true, Some(false) stays false
-        let analytics_enabled = old_config.analytics_enabled.unwrap_or(true);
+        let analytics_enabled = old_config.analytics_enabled.unwrap_or(false);
 
         Self {
             config_version: "v8".to_string(),
@@ -92,6 +99,7 @@ impl Config {
             commit_reminder_enabled: true,
             commit_reminder_prompt: None,
             send_message_shortcut: SendMessageShortcut::default(),
+            max_log_bytes_per_execution: default_max_log_bytes_per_execution(),
         }
     }
 
@@ -133,7 +141,7 @@ impl Default for Config {
             notifications: NotificationConfig::default(),
             editor: EditorConfig::default(),
             github: GitHubConfig::default(),
-            analytics_enabled: true,
+            analytics_enabled: false,
             workspace_dir: None,
             last_app_version: None,
             show_release_notes: false,
@@ -147,6 +155,38 @@ impl Default for Config {
             commit_reminder_enabled: true,
             commit_reminder_prompt: None,
             send_message_shortcut: SendMessageShortcut::default(),
+            max_log_bytes_per_execution: default_max_log_bytes_per_execution(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_disables_analytics() {
+        assert!(!Config::default().analytics_enabled);
+    }
+
+    #[test]
+    fn migrating_v7_without_explicit_analytics_opt_in_disables_analytics() {
+        let mut old_config = v7::Config::default();
+        old_config.analytics_enabled = None;
+
+        let migrated = Config::from_v7_config(old_config);
+
+        assert!(!migrated.analytics_enabled);
+    }
+
+    #[test]
+    fn migrating_v7_preserves_explicit_analytics_choice() {
+        let mut opted_in = v7::Config::default();
+        opted_in.analytics_enabled = Some(true);
+        assert!(Config::from_v7_config(opted_in).analytics_enabled);
+
+        let mut opted_out = v7::Config::default();
+        opted_out.analytics_enabled = Some(false);
+        assert!(!Config::from_v7_config(opted_out).analytics_enabled);
     }
 }

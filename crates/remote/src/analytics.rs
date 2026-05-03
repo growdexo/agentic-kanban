@@ -11,11 +11,19 @@ pub struct AnalyticsConfig {
 
 impl AnalyticsConfig {
     pub fn from_env() -> Option<Self> {
-        let api_key = option_env!("POSTHOG_API_KEY")?.to_string();
-        let api_endpoint = option_env!("POSTHOG_API_ENDPOINT")?.to_string();
+        let api_key = std::env::var("POSTHOG_API_KEY").ok()?;
+        let api_endpoint = std::env::var("POSTHOG_API_ENDPOINT").ok()?;
+
+        let api_key = api_key.trim();
+        let api_endpoint = api_endpoint.trim();
+
+        if api_key.is_empty() || api_endpoint.is_empty() {
+            return None;
+        }
+
         Some(Self {
-            posthog_api_key: api_key,
-            posthog_api_endpoint: api_endpoint,
+            posthog_api_key: api_key.to_string(),
+            posthog_api_endpoint: api_endpoint.to_string(),
         })
     }
 }

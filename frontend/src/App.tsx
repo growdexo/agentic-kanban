@@ -8,7 +8,6 @@ import { FullAttemptLogsPage } from '@/pages/FullAttemptLogs';
 import { Migration } from '@/pages/Migration';
 import { NormalLayout } from '@/components/layout/NormalLayout';
 import { SharedAppLayout } from '@/components/ui-new/containers/SharedAppLayout';
-import { usePostHog } from 'posthog-js/react';
 import { useAuth } from '@/hooks';
 import { usePreviousPath } from '@/hooks/usePreviousPath';
 import { useUiPreferencesScratch } from '@/hooks/useUiPreferencesScratch';
@@ -31,6 +30,7 @@ import { HotkeysProvider } from 'react-hotkeys-hook';
 import { ProjectProvider } from '@/contexts/ProjectContext';
 import { ThemeMode } from 'shared/types';
 import * as Sentry from '@sentry/react';
+import { configureFrontendTelemetry } from '@/lib/telemetry';
 
 import { DisclaimerDialog } from '@/components/dialogs/global/DisclaimerDialog';
 import { OnboardingDialog } from '@/components/dialogs/global/OnboardingDialog';
@@ -55,7 +55,6 @@ const SentryRoutes = Sentry.withSentryReactRouterV6Routing(Routes);
 
 function AppContent() {
   const { config, analyticsUserId, updateAndSaveConfig } = useUserSystem();
-  const posthog = usePostHog();
   const { isSignedIn } = useAuth();
 
   // Track previous path for back navigation
@@ -66,17 +65,10 @@ function AppContent() {
 
   // Handle opt-in/opt-out and user identification when config loads
   useEffect(() => {
-    if (!posthog || !analyticsUserId) return;
+    if (!config) return;
 
-    if (config?.analytics_enabled) {
-      posthog.opt_in_capturing();
-      posthog.identify(analyticsUserId);
-      console.log('[Analytics] Analytics enabled and user identified');
-    } else {
-      posthog.opt_out_capturing();
-      console.log('[Analytics] Analytics disabled by user preference');
-    }
-  }, [config?.analytics_enabled, analyticsUserId, posthog]);
+    configureFrontendTelemetry(config.analytics_enabled, analyticsUserId);
+  }, [config, analyticsUserId]);
 
   useEffect(() => {
     if (!config) return;

@@ -10,10 +10,10 @@ use chrono::{DateTime, Utc};
 use deployment::Deployment;
 use rand::{Rng, distributions::Alphanumeric};
 use serde::{Deserialize, Serialize};
-use services::services::{config::save_config_to_file, oauth_credentials::Credentials};
+use services::services::oauth_credentials::Credentials;
 use sha2::{Digest, Sha256};
 use ts_rs::TS;
-use utils::{assets::config_path, jwt::extract_expiration, response::ApiResponse};
+use utils::{jwt::extract_expiration, response::ApiResponse};
 use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError};
@@ -152,55 +152,18 @@ async fn handoff_complete(
             ApiError::Io(e)
         })?;
 
-    // Enable analytics automatically on login if not already enabled
-    let config_guard = deployment.config().read().await;
-    if !config_guard.analytics_enabled {
-        let mut new_config = config_guard.clone();
-        drop(config_guard); // Release read lock before acquiring write lock
-
-        new_config.analytics_enabled = true;
-
-        // Save updated config to disk
-        let config_path = config_path();
-        if let Err(e) = save_config_to_file(&new_config, &config_path).await {
-            tracing::warn!(
-                ?e,
-                "failed to save config after enabling analytics on login"
-            );
-        } else {
-            // Update in-memory config
-            let mut config = deployment.config().write().await;
-            *config = new_config;
-            drop(config);
-
-            tracing::info!("analytics automatically enabled after successful login");
-
-            // Track analytics_session_start event
-            if let Some(analytics) = deployment.analytics() {
-                analytics.track_event(
-                    deployment.user_id(),
-                    "analytics_session_start",
-                    Some(serde_json::json!({})),
-                );
-            }
-        }
-    } else {
-        drop(config_guard);
-    }
-
     // Fetch and cache the user's profile
     let _ = deployment.get_login_status().await;
 
-    if let Some(profile) = deployment.auth_context().cached_profile().await
-        && let Some(analytics) = deployment.analytics()
-    {
-        analytics.track_event(
-            deployment.user_id(),
-            "$identify",
-            Some(serde_json::json!({
-                "email": profile.email,
-            })),
-        );
+    if let Some(profile) = deployment.auth_context().cached_profile().await {
+        deployment
+            .track_if_analytics_allowed(
+                "$identify",
+                serde_json::json!({
+                    "email": profile.email,
+                }),
+            )
+            .await;
     }
 
     Ok(close_window_response(format!(

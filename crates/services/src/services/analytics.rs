@@ -21,16 +21,23 @@ pub struct AnalyticsConfig {
 
 impl AnalyticsConfig {
     pub fn new() -> Option<Self> {
-        let api_key = option_env!("POSTHOG_API_KEY")
-            .map(|s| s.to_string())
-            .or_else(|| std::env::var("POSTHOG_API_KEY").ok())?;
-        let api_endpoint = option_env!("POSTHOG_API_ENDPOINT")
-            .map(|s| s.to_string())
-            .or_else(|| std::env::var("POSTHOG_API_ENDPOINT").ok())?;
+        Self::from_lookup(|key| std::env::var(key).ok())
+    }
+
+    fn from_lookup(mut lookup: impl FnMut(&str) -> Option<String>) -> Option<Self> {
+        let api_key = lookup("POSTHOG_API_KEY")?;
+        let api_endpoint = lookup("POSTHOG_API_ENDPOINT")?;
+
+        let api_key = api_key.trim();
+        let api_endpoint = api_endpoint.trim();
+
+        if api_key.is_empty() || api_endpoint.is_empty() {
+            return None;
+        }
 
         Some(Self {
-            posthog_api_key: api_key,
-            posthog_api_endpoint: api_endpoint,
+            posthog_api_key: api_key.to_string(),
+            posthog_api_endpoint: api_endpoint.to_string(),
         })
     }
 }
@@ -197,5 +204,34 @@ mod tests {
         let id1 = generate_user_id();
         let id2 = generate_user_id();
         assert_eq!(id1, id2, "ID should be consistent across calls");
+    }
+
+    #[test]
+    fn analytics_config_requires_key_and_endpoint() {
+        let missing_endpoint = AnalyticsConfig::from_lookup(|key| match key {
+            "POSTHOG_API_KEY" => Some("key".to_string()),
+            _ => None,
+        });
+        assert!(missing_endpoint.is_none());
+
+        let empty_key = AnalyticsConfig::from_lookup(|key| match key {
+            "POSTHOG_API_KEY" => Some("   ".to_string()),
+            "POSTHOG_API_ENDPOINT" => Some("https://example.com".to_string()),
+            _ => None,
+        });
+        assert!(empty_key.is_none());
+    }
+
+    #[test]
+    fn analytics_config_trims_runtime_env_values() {
+        let config = AnalyticsConfig::from_lookup(|key| match key {
+            "POSTHOG_API_KEY" => Some(" key ".to_string()),
+            "POSTHOG_API_ENDPOINT" => Some(" https://example.com ".to_string()),
+            _ => None,
+        })
+        .expect("analytics config should be present");
+
+        assert_eq!(config.posthog_api_key, "key");
+        assert_eq!(config.posthog_api_endpoint, "https://example.com");
     }
 }

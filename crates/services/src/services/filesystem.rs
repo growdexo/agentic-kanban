@@ -12,6 +12,7 @@ use thiserror::Error;
 #[cfg(not(feature = "qa-mode"))]
 use tokio_util::sync::CancellationToken;
 use ts_rs::TS;
+use utils::path_safety::{PathSafetyError, assert_path_under_root};
 
 #[derive(Clone)]
 pub struct FilesystemService {}
@@ -22,6 +23,8 @@ pub enum FilesystemError {
     DirectoryDoesNotExist,
     #[error("Path is not a directory")]
     PathIsNotDirectory,
+    #[error("Path is outside allowed directories")]
+    AccessDenied,
     #[error("Failed to read directory: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -288,7 +291,7 @@ impl FilesystemService {
         Ok(git_repos)
     }
 
-    fn get_home_directory() -> PathBuf {
+    pub fn get_home_directory() -> PathBuf {
         dirs::home_dir()
             .or_else(dirs::desktop_dir)
             .or_else(dirs::document_dir)
@@ -311,6 +314,45 @@ impl FilesystemService {
             return Err(FilesystemError::PathIsNotDirectory);
         }
         Ok(())
+    }
+
+    fn verify_path_allowed(
+        path: &Path,
+        allowed_roots: &[PathBuf],
+    ) -> Result<PathBuf, FilesystemError> {
+        for root in allowed_roots {
+            match assert_path_under_root(path, root) {
+                Ok(canonical_path) => return Ok(canonical_path.into_path_buf()),
+                Err(PathSafetyError::OutsideRoot { .. }) => {}
+                Err(PathSafetyError::Canonicalize { .. }) => {
+                    // Optional roots can disappear between config/database reads and request
+                    // handling. Skip them; the requested path was already checked for existence.
+                }
+            }
+        }
+
+        Err(FilesystemError::AccessDenied)
+    }
+
+    pub async fn list_git_repos_with_allowlist(
+        &self,
+        path: String,
+        allowed_roots: &[PathBuf],
+        timeout_ms: u64,
+        hard_timeout_ms: u64,
+        max_depth: Option<usize>,
+    ) -> Result<Vec<DirectoryEntry>, FilesystemError> {
+        let base_path = PathBuf::from(path);
+        Self::verify_directory(&base_path)?;
+        let base_path = Self::verify_path_allowed(&base_path, allowed_roots)?;
+
+        self.list_git_repos(
+            Some(base_path.to_string_lossy().to_string()),
+            timeout_ms,
+            hard_timeout_ms,
+            max_depth,
+        )
+        .await
     }
 
     pub async fn list_directory(
@@ -361,5 +403,20 @@ impl FilesystemService {
             entries: directory_entries,
             current_path: path.to_string_lossy().to_string(),
         })
+    }
+
+    pub async fn list_directory_with_allowlist(
+        &self,
+        path: Option<String>,
+        allowed_roots: &[PathBuf],
+    ) -> Result<DirectoryListResponse, FilesystemError> {
+        let path = path
+            .map(PathBuf::from)
+            .unwrap_or_else(Self::get_home_directory);
+        Self::verify_directory(&path)?;
+        let path = Self::verify_path_allowed(&path, allowed_roots)?;
+
+        self.list_directory(Some(path.to_string_lossy().to_string()))
+            .await
     }
 }

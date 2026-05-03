@@ -11,7 +11,11 @@ use git::{GitService, GitServiceError};
 use git2::{Error as GitError, Repository};
 use thiserror::Error;
 use tracing::{debug, info, trace};
-use utils::{path::normalize_macos_private_alias, shell::resolve_executable_path};
+use utils::{
+    path::normalize_macos_private_alias,
+    path_safety::{PathSafetyError, assert_path_under_root},
+    shell::resolve_executable_path,
+};
 
 // Global synchronization for worktree creation to prevent race conditions
 static WORKTREE_CREATION_LOCKS: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
@@ -57,6 +61,47 @@ pub struct WorktreeManager;
 impl WorktreeManager {
     pub fn set_workspace_dir_override(path: PathBuf) {
         let _ = WORKSPACE_DIR_OVERRIDE.set(path);
+    }
+
+    fn worktree_base_dirs() -> Vec<PathBuf> {
+        let mut roots = vec![
+            Self::get_worktree_base_dir(),
+            Self::get_default_worktree_base_dir(),
+        ];
+        roots.sort();
+        roots.dedup();
+        roots
+    }
+
+    pub(crate) fn assert_path_under_worktree_base(path: &Path) -> Result<(), WorktreeError> {
+        for root in Self::worktree_base_dirs() {
+            match assert_path_under_root(path, &root) {
+                Ok(_) => return Ok(()),
+                Err(PathSafetyError::OutsideRoot { .. }) => {}
+                Err(PathSafetyError::Canonicalize { .. }) => {}
+            }
+        }
+
+        Err(WorktreeError::InvalidPath(format!(
+            "Refusing to remove path outside workspace roots: {}",
+            path.display()
+        )))
+    }
+
+    fn assert_path_under_git_worktree_metadata(
+        path: &Path,
+        git_repo_path: &Path,
+    ) -> Result<(), WorktreeError> {
+        let metadata_root = Self::get_worktree_metadata_path(git_repo_path)?;
+        assert_path_under_root(path, &metadata_root)
+            .map(|_| ())
+            .map_err(|err| {
+                WorktreeError::InvalidPath(format!(
+                    "Refusing to remove git worktree metadata outside {}: {}",
+                    metadata_root.display(),
+                    err
+                ))
+            })
     }
 
     /// Create a worktree with a new branch
@@ -264,6 +309,7 @@ impl WorktreeManager {
                 "Removing existing worktree directory: {}",
                 worktree_path.display()
             );
+            Self::assert_path_under_worktree_base(worktree_path)?;
             std::fs::remove_dir_all(worktree_path).map_err(WorktreeError::Io)?;
         }
 
@@ -353,6 +399,7 @@ impl WorktreeManager {
                     // Clean up physical directory if it exists
                     // Needed if previous attempt failed after directory creation
                     if worktree_path.exists() {
+                        Self::assert_path_under_worktree_base(&worktree_path)?;
                         std::fs::remove_dir_all(&worktree_path).map_err(WorktreeError::Io)?;
                     }
                     if let Err(e2) = git_service.add_worktree(
@@ -409,6 +456,10 @@ impl WorktreeManager {
                     "Force removing git worktree metadata: {}",
                     git_worktree_metadata_path.display()
                 );
+                Self::assert_path_under_git_worktree_metadata(
+                    &git_worktree_metadata_path,
+                    git_repo_path,
+                )?;
                 std::fs::remove_dir_all(&git_worktree_metadata_path)?;
             }
         }
@@ -502,6 +553,7 @@ impl WorktreeManager {
 
         tokio::task::spawn_blocking(move || -> Result<(), WorktreeError> {
             if worktree_path_owned.exists() {
+                Self::assert_path_under_worktree_base(&worktree_path_owned)?;
                 std::fs::remove_dir_all(&worktree_path_owned).map_err(WorktreeError::Io)?;
                 info!(
                     "Removed worktree directory: {}",
@@ -605,4 +657,26 @@ async fn create_worktree_when_repo_path_is_a_worktree() {
     )
     .await
     .unwrap();
+}
+
+#[test]
+fn reject_destructive_path_outside_worktree_base() {
+    use tempfile::TempDir;
+
+    let outside = TempDir::new().unwrap();
+
+    let err = WorktreeManager::assert_path_under_worktree_base(outside.path()).unwrap_err();
+
+    assert!(matches!(err, WorktreeError::InvalidPath(_)));
+}
+
+#[test]
+fn allow_destructive_path_inside_worktree_base() {
+    let root = WorktreeManager::get_default_worktree_base_dir();
+    let path = root.join(format!("test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&path).unwrap();
+
+    WorktreeManager::assert_path_under_worktree_base(&path).unwrap();
+
+    std::fs::remove_dir_all(&path).unwrap();
 }

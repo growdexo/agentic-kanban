@@ -12,14 +12,15 @@ use db::{
         coding_agent_turn::{CodingAgentTurn, CreateCodingAgentTurn},
         execution_process::{
             CreateExecutionProcess, ExecutionContext, ExecutionProcess, ExecutionProcessError,
-            ExecutionProcessRunReason, ExecutionProcessStatus,
+            ExecutionProcessRecoveryReason, ExecutionProcessRunReason, ExecutionProcessStatus,
         },
-        execution_process_logs::ExecutionProcessLogs,
+        execution_process_logs::{AppendLogBatchOutcome, ExecutionProcessLogs},
         execution_process_repo_state::{
             CreateExecutionProcessRepoState, ExecutionProcessRepoState,
         },
         repo::Repo,
         session::{CreateSession, Session, SessionError},
+        startup_recovery_summary::{CreateStartupRecoverySummary, StartupRecoverySummary},
         task::{Task, TaskStatus},
         workspace::{Workspace, WorkspaceError},
         workspace_repo::WorkspaceRepo,
@@ -42,12 +43,17 @@ use executors::{
 use futures::{StreamExt, future, stream::BoxStream};
 use git::{GitService, GitServiceError};
 use json_patch::Patch;
-use sqlx::Error as SqlxError;
+use sqlx::{Error as SqlxError, SqlitePool};
 use thiserror::Error;
-use tokio::{sync::RwLock, task::JoinHandle};
+use tokio::{
+    sync::RwLock,
+    task::JoinHandle,
+    time::{Duration, MissedTickBehavior},
+};
 use utils::{
     log_msg::LogMsg,
     msg_store::MsgStore,
+    process::{ProcessRecoveryCheck, check_process_for_recovery},
     text::{git_branch_id, short_uuid},
 };
 use uuid::Uuid;
@@ -57,6 +63,39 @@ use crate::services::{
     worktree_manager::WorktreeError,
 };
 pub type ContainerRef = String;
+
+const RAW_LOG_BATCH_MAX_LINES: usize = 64;
+const RAW_LOG_BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
+
+async fn flush_raw_log_batch(
+    pool: &SqlitePool,
+    execution_id: Uuid,
+    log_batch: &mut String,
+    log_batch_lines: &mut usize,
+    max_log_bytes: i64,
+) -> bool {
+    if log_batch.is_empty() {
+        return false;
+    }
+
+    let batch = std::mem::take(log_batch);
+    *log_batch_lines = 0;
+
+    match ExecutionProcessLogs::append_log_batch_capped(pool, execution_id, &batch, max_log_bytes)
+        .await
+    {
+        Ok(AppendLogBatchOutcome::Appended) => false,
+        Ok(AppendLogBatchOutcome::Truncated | AppendLogBatchOutcome::AlreadyTruncated) => true,
+        Err(e) => {
+            tracing::error!(
+                "Failed to append log batch for execution {}: {}",
+                execution_id,
+                e
+            );
+            false
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum ContainerError {
@@ -95,6 +134,8 @@ pub trait ContainerService {
     fn notification_service(&self) -> &NotificationService;
 
     fn workspace_to_current_dir(&self, workspace: &Workspace) -> PathBuf;
+
+    fn max_log_bytes_per_execution(&self) -> i64;
 
     async fn available_agent_slash_commands(
         &self,
@@ -256,18 +297,54 @@ pub trait ContainerService {
     /// Cleanup executions marked as running in the db, call at startup
     async fn cleanup_orphan_executions(&self) -> Result<(), ContainerError> {
         let running_processes = ExecutionProcess::find_running(&self.db().pool).await?;
+        let running_found = running_processes.len() as i64;
+        let mut reattached_execution_process_ids = Vec::new();
+        let mut orphaned_execution_process_ids = Vec::new();
+
         for process in running_processes {
+            let recovery_check =
+                check_process_for_recovery(process.os_pid, process.command_snapshot.as_deref());
+
+            if matches!(recovery_check, ProcessRecoveryCheck::AliveMatched) {
+                tracing::info!(
+                    "Recovered running execution process {} for session {} with pid {:?}",
+                    process.id,
+                    process.session_id,
+                    process.os_pid
+                );
+                if let Err(e) = ExecutionProcess::update_recovery_reason(
+                    &self.db().pool,
+                    process.id,
+                    ExecutionProcessRecoveryReason::RecoveredRunning,
+                )
+                .await
+                {
+                    tracing::error!(
+                        "Failed to mark execution process {} as recovered: {}",
+                        process.id,
+                        e
+                    );
+                    continue;
+                }
+
+                self.spawn_recovered_process_monitor(&process);
+                reattached_execution_process_ids.push(process.id);
+                continue;
+            }
+
             tracing::info!(
-                "Found orphaned execution process {} for session {}",
+                "Found orphaned execution process {} for session {} during startup recovery: {:?}",
                 process.id,
-                process.session_id
+                process.session_id,
+                recovery_check
             );
-            // Update the execution process status first
-            if let Err(e) = ExecutionProcess::update_completion(
+
+            if let Err(e) = ExecutionProcess::update_completion_with_recovery_reason(
                 &self.db().pool,
                 process.id,
-                ExecutionProcessStatus::Failed,
-                None, // No exit code for orphaned processes
+                ExecutionProcessStatus::Killed,
+                None,
+                ExecutionProcessRecoveryReason::RecoveryOrphaned,
             )
             .await
             {
@@ -278,6 +355,9 @@ pub trait ContainerService {
                 );
                 continue;
             }
+
+            orphaned_execution_process_ids.push(process.id);
+
             // Capture after-head commit OID per repository
             if let Ok(ctx) = ExecutionProcess::load_context(&self.db().pool, process.id).await
                 && let Some(ref container_ref) = ctx.workspace.container_ref
@@ -303,8 +383,10 @@ pub trait ContainerService {
                     }
                 }
             }
-            // Process marked as failed
-            tracing::info!("Marked orphaned execution process {} as failed", process.id);
+            tracing::info!(
+                "Marked orphaned execution process {} as killed/recovery_orphaned",
+                process.id
+            );
             // Update task status to InReview for coding agent and setup script failures
             if matches!(
                 process.run_reason,
@@ -325,6 +407,23 @@ pub trait ContainerService {
                 );
             }
         }
+
+        if running_found > 0
+            && let Err(err) = StartupRecoverySummary::create(
+                &self.db().pool,
+                &CreateStartupRecoverySummary {
+                    running_found,
+                    reattached_count: reattached_execution_process_ids.len() as i64,
+                    orphaned_count: orphaned_execution_process_ids.len() as i64,
+                    reattached_execution_process_ids,
+                    orphaned_execution_process_ids,
+                },
+            )
+            .await
+        {
+            tracing::warn!("Failed to persist startup recovery summary: {}", err);
+        }
+
         Ok(())
     }
 
@@ -759,6 +858,8 @@ pub trait ContainerService {
         status: ExecutionProcessStatus,
     ) -> Result<(), ContainerError>;
 
+    fn spawn_recovered_process_monitor(&self, _execution_process: &ExecutionProcess) {}
+
     async fn try_commit_changes(&self, ctx: &ExecutionContext) -> Result<bool, ContainerError>;
 
     async fn copy_project_files(
@@ -1021,6 +1122,7 @@ pub trait ContainerService {
         let execution_id = *execution_id;
         let msg_stores = self.msg_stores().clone();
         let db = self.db().clone();
+        let max_log_bytes = self.max_log_bytes_per_execution();
 
         tokio::spawn(async move {
             // Get the message store for this execution
@@ -1031,78 +1133,123 @@ pub trait ContainerService {
 
             if let Some(store) = store {
                 let mut stream = store.history_plus_stream();
+                let mut flush_interval = tokio::time::interval(RAW_LOG_BATCH_FLUSH_INTERVAL);
+                flush_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+                let mut log_batch = String::new();
+                let mut log_batch_lines = 0_usize;
+                let mut log_persistence_closed = false;
 
-                while let Some(Ok(msg)) = stream.next().await {
-                    match &msg {
-                        LogMsg::Stdout(_) | LogMsg::Stderr(_) => {
-                            // Serialize this individual message as a JSONL line
-                            match serde_json::to_string(&msg) {
-                                Ok(jsonl_line) => {
-                                    let jsonl_line_with_newline = format!("{jsonl_line}\n");
+                loop {
+                    tokio::select! {
+                        _ = flush_interval.tick() => {
+                            if flush_raw_log_batch(
+                                &db.pool,
+                                execution_id,
+                                &mut log_batch,
+                                &mut log_batch_lines,
+                                max_log_bytes,
+                            )
+                            .await
+                            {
+                                log_persistence_closed = true;
+                            }
+                        }
+                        maybe_msg = stream.next() => {
+                            let Some(Ok(msg)) = maybe_msg else {
+                                break;
+                            };
 
-                                    // Append this line to the database
-                                    if let Err(e) = ExecutionProcessLogs::append_log_line(
+                            match &msg {
+                                LogMsg::Stdout(_) | LogMsg::Stderr(_) => {
+                                    if log_persistence_closed {
+                                        continue;
+                                    }
+
+                                    match serde_json::to_string(&msg) {
+                                        Ok(jsonl_line) => {
+                                            log_batch.push_str(&jsonl_line);
+                                            log_batch.push('\n');
+                                            log_batch_lines += 1;
+
+                                            if log_batch_lines >= RAW_LOG_BATCH_MAX_LINES
+                                                && flush_raw_log_batch(
+                                                    &db.pool,
+                                                    execution_id,
+                                                    &mut log_batch,
+                                                    &mut log_batch_lines,
+                                                    max_log_bytes,
+                                                )
+                                                .await
+                                            {
+                                                log_persistence_closed = true;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::error!(
+                                                "Failed to serialize log message for execution {}: {}",
+                                                execution_id,
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                                LogMsg::SessionId(agent_session_id) => {
+                                    if let Err(e) = CodingAgentTurn::update_agent_session_id(
                                         &db.pool,
                                         execution_id,
-                                        &jsonl_line_with_newline,
+                                        agent_session_id,
                                     )
                                     .await
                                     {
                                         tracing::error!(
-                                            "Failed to append log line for execution {}: {}",
+                                            "Failed to update agent_session_id {} for execution process {}: {}",
+                                            agent_session_id,
                                             execution_id,
                                             e
                                         );
                                     }
                                 }
-                                Err(e) => {
-                                    tracing::error!(
-                                        "Failed to serialize log message for execution {}: {}",
+                                LogMsg::MessageId(agent_message_id) => {
+                                    if let Err(e) = CodingAgentTurn::update_agent_message_id(
+                                        &db.pool,
                                         execution_id,
-                                        e
-                                    );
+                                        agent_message_id,
+                                    )
+                                    .await
+                                    {
+                                        tracing::error!(
+                                            "Failed to update agent_message_id {} for execution process {}: {}",
+                                            agent_message_id,
+                                            execution_id,
+                                            e
+                                        );
+                                    }
                                 }
+                                LogMsg::Finished => {
+                                    let _ = flush_raw_log_batch(
+                                        &db.pool,
+                                        execution_id,
+                                        &mut log_batch,
+                                        &mut log_batch_lines,
+                                        max_log_bytes,
+                                    )
+                                    .await;
+                                    break;
+                                }
+                                LogMsg::JsonPatch(_) | LogMsg::Ready => continue,
                             }
                         }
-                        LogMsg::SessionId(agent_session_id) => {
-                            // Append this line to the database
-                            if let Err(e) = CodingAgentTurn::update_agent_session_id(
-                                &db.pool,
-                                execution_id,
-                                agent_session_id,
-                            )
-                            .await
-                            {
-                                tracing::error!(
-                                    "Failed to update agent_session_id {} for execution process {}: {}",
-                                    agent_session_id,
-                                    execution_id,
-                                    e
-                                );
-                            }
-                        }
-                        LogMsg::MessageId(agent_message_id) => {
-                            if let Err(e) = CodingAgentTurn::update_agent_message_id(
-                                &db.pool,
-                                execution_id,
-                                agent_message_id,
-                            )
-                            .await
-                            {
-                                tracing::error!(
-                                    "Failed to update agent_message_id {} for execution process {}: {}",
-                                    agent_message_id,
-                                    execution_id,
-                                    e
-                                );
-                            }
-                        }
-                        LogMsg::Finished => {
-                            break;
-                        }
-                        LogMsg::JsonPatch(_) | LogMsg::Ready => continue,
                     }
                 }
+
+                let _ = flush_raw_log_batch(
+                    &db.pool,
+                    execution_id,
+                    &mut log_batch,
+                    &mut log_batch_lines,
+                    max_log_bytes,
+                )
+                .await;
             }
         })
     }
@@ -1311,10 +1458,12 @@ pub trait ContainerService {
             // Emit stderr error message
             let log_message = LogMsg::Stderr(format!("Failed to start execution: {start_error}"));
             if let Ok(json_line) = serde_json::to_string(&log_message) {
-                let _ = ExecutionProcessLogs::append_log_line(
+                let max_log_bytes = self.max_log_bytes_per_execution();
+                let _ = ExecutionProcessLogs::append_log_batch_capped(
                     &self.db().pool,
                     execution_process.id,
                     &format!("{json_line}\n"),
+                    max_log_bytes,
                 )
                 .await;
             }
@@ -1334,10 +1483,12 @@ pub trait ContainerService {
                 };
                 let patch = ConversationPatch::add_normalized_entry(2, error_message);
                 if let Ok(json_line) = serde_json::to_string::<LogMsg>(&LogMsg::JsonPatch(patch)) {
-                    let _ = ExecutionProcessLogs::append_log_line(
+                    let max_log_bytes = self.max_log_bytes_per_execution();
+                    let _ = ExecutionProcessLogs::append_log_batch_capped(
                         &self.db().pool,
                         execution_process.id,
                         &format!("{json_line}\n"),
+                        max_log_bytes,
                     )
                     .await;
                 }

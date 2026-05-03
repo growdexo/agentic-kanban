@@ -2,7 +2,7 @@
 mod filesystem_tests {
     use std::{fs, path::Path};
 
-    use services::services::filesystem::FilesystemService;
+    use services::services::filesystem::{FilesystemError, FilesystemService};
     use tempfile::TempDir;
 
     /// Helper function to create a directory structure
@@ -178,5 +178,67 @@ mod filesystem_tests {
 
         // Should not find deep repo due to depth limit
         assert!(!repo_names.contains(&"deep_repo".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_list_directory_with_allowlist_allows_configured_root() {
+        let temp_dir = TempDir::new().unwrap();
+        create_dir_structure(temp_dir.path(), "allowed");
+
+        let allowed_path = temp_dir.path().join("allowed");
+        let filesystem_service = FilesystemService::new();
+
+        let response = filesystem_service
+            .list_directory_with_allowlist(
+                Some(allowed_path.to_string_lossy().to_string()),
+                &[temp_dir.path().to_path_buf()],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.current_path,
+            dunce::canonicalize(allowed_path)
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_directory_with_allowlist_denies_outside_path() {
+        let allowed = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let filesystem_service = FilesystemService::new();
+
+        let result = filesystem_service
+            .list_directory_with_allowlist(
+                Some(outside.path().to_string_lossy().to_string()),
+                &[allowed.path().to_path_buf()],
+            )
+            .await;
+
+        assert!(matches!(result, Err(FilesystemError::AccessDenied)));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_list_directory_with_allowlist_denies_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let allowed = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let link = allowed.path().join("escape");
+        symlink(outside.path(), &link).unwrap();
+        let filesystem_service = FilesystemService::new();
+
+        let result = filesystem_service
+            .list_directory_with_allowlist(
+                Some(link.to_string_lossy().to_string()),
+                &[allowed.path().to_path_buf()],
+            )
+            .await;
+
+        assert!(matches!(result, Err(FilesystemError::AccessDenied)));
     }
 }

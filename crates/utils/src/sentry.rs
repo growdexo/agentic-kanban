@@ -3,10 +3,7 @@ use std::sync::OnceLock;
 use sentry_tracing::{EventFilter, SentryLayer};
 use tracing::Level;
 
-const SENTRY_DSN_DEFAULT: &str = "https://1065a1d276a581316999a07d5dffee26@o4509603705192449.ingest.de.sentry.io/4509605576441937";
-const SENTRY_DSN_REMOTE: &str = "https://d6e4c45af2b081fadb10fb0ba726ccaf@o4509603705192449.ingest.de.sentry.io/4510305669283920";
-
-static INIT_GUARD: OnceLock<sentry::ClientInitGuard> = OnceLock::new();
+static INIT_GUARD: OnceLock<Option<sentry::ClientInitGuard>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug)]
 pub enum SentrySource {
@@ -24,11 +21,21 @@ impl SentrySource {
         }
     }
 
-    fn dsn(self) -> &'static str {
+    fn dsn_env_vars(self) -> &'static [&'static str] {
         match self {
-            SentrySource::Remote => SENTRY_DSN_REMOTE,
-            _ => SENTRY_DSN_DEFAULT,
+            SentrySource::Backend => &["VIBE_KANBAN_BACKEND_SENTRY_DSN", "SENTRY_DSN"],
+            SentrySource::Mcp => &["VIBE_KANBAN_MCP_SENTRY_DSN", "SENTRY_DSN"],
+            SentrySource::Remote => &["VIBE_KANBAN_REMOTE_SENTRY_DSN", "SENTRY_DSN"],
         }
+    }
+
+    fn dsn(self) -> Option<String> {
+        self.dsn_env_vars().iter().find_map(|key| {
+            std::env::var(key)
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
     }
 }
 
@@ -41,20 +48,24 @@ fn environment() -> &'static str {
 }
 
 pub fn init_once(source: SentrySource) {
-    INIT_GUARD.get_or_init(|| {
-        sentry::init((
-            source.dsn(),
-            sentry::ClientOptions {
-                release: sentry::release_name!(),
-                environment: Some(environment().into()),
-                ..Default::default()
-            },
-        ))
+    let guard = INIT_GUARD.get_or_init(|| {
+        source.dsn().map(|dsn| {
+            sentry::init((
+                dsn,
+                sentry::ClientOptions {
+                    release: sentry::release_name!(),
+                    environment: Some(environment().into()),
+                    ..Default::default()
+                },
+            ))
+        })
     });
 
-    sentry::configure_scope(|scope| {
-        scope.set_tag("source", source.tag());
-    });
+    if guard.is_some() {
+        sentry::configure_scope(|scope| {
+            scope.set_tag("source", source.tag());
+        });
+    }
 }
 
 pub fn configure_user_scope(user_id: &str, username: Option<&str>, email: Option<&str>) {

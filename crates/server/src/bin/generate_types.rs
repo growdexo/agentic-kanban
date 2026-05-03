@@ -52,6 +52,7 @@ fn generate_types_content() -> String {
         db::models::workspace::WorkspaceWithStatus::decl(),
         db::models::session::Session::decl(),
         db::models::execution_process::ExecutionProcess::decl(),
+        db::models::execution_process::ExecutionProcessRecoveryReason::decl(),
         db::models::execution_process::ExecutionProcessStatus::decl(),
         db::models::execution_process::ExecutionProcessRunReason::decl(),
         db::models::execution_process_repo_state::ExecutionProcessRepoState::decl(),

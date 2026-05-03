@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use api_types::{PullRequestStatus, UpsertPullRequestRequest};
 use chrono::Utc;
@@ -13,11 +13,12 @@ use db::{
 use serde_json::json;
 use sqlx::error::Error as SqlxError;
 use thiserror::Error;
-use tokio::time::interval;
+use tokio::{sync::RwLock, time::interval};
 use tracing::{debug, error, info};
 
 use crate::services::{
     analytics::AnalyticsContext,
+    config::Config,
     container::ContainerService,
     git_host::{self, GitHostError, GitHostProvider},
     remote_client::RemoteClient,
@@ -38,6 +39,7 @@ enum PrMonitorError {
 pub struct PrMonitorService<C: ContainerService> {
     db: DBService,
     poll_interval: Duration,
+    config: Arc<RwLock<Config>>,
     analytics: Option<AnalyticsContext>,
     container: C,
     remote_client: Option<RemoteClient>,
@@ -46,6 +48,7 @@ pub struct PrMonitorService<C: ContainerService> {
 impl<C: ContainerService + Send + Sync + 'static> PrMonitorService<C> {
     pub async fn spawn(
         db: DBService,
+        config: Arc<RwLock<Config>>,
         analytics: Option<AnalyticsContext>,
         container: C,
         remote_client: Option<RemoteClient>,
@@ -53,6 +56,7 @@ impl<C: ContainerService + Send + Sync + 'static> PrMonitorService<C> {
         let service = Self {
             db,
             poll_interval: Duration::from_secs(60), // Check every minute
+            config,
             analytics,
             container,
             remote_client,
@@ -141,7 +145,8 @@ impl<C: ContainerService + Send + Sync + 'static> PrMonitorService<C> {
                 }
 
                 // Track analytics event
-                if let Some(analytics) = &self.analytics
+                if self.config.read().await.analytics_enabled
+                    && let Some(analytics) = &self.analytics
                     && let Ok(Some(task)) = Task::find_by_id(&self.db.pool, workspace.task_id).await
                 {
                     analytics.analytics_service.track_event(

@@ -32,7 +32,12 @@ use services::services::{
 };
 use tokio::fs;
 use ts_rs::TS;
-use utils::{assets::config_path, log_msg::LogMsg, response::ApiResponse};
+use utils::{
+    assets::config_path,
+    log_msg::LogMsg,
+    response::ApiResponse,
+    sentry::{self as sentry_utils, SentrySource},
+};
 use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError};
@@ -192,6 +197,13 @@ async fn track_config_events(deployment: &DeploymentImpl, old: &Config, new: &Co
 
 async fn handle_config_events(deployment: &DeploymentImpl, old: &Config, new: &Config) {
     track_config_events(deployment, old, new).await;
+
+    if !old.analytics_enabled && new.analytics_enabled {
+        sentry_utils::init_once(SentrySource::Backend);
+        if let Err(e) = deployment.update_sentry_scope().await {
+            tracing::warn!(?e, "failed to update Sentry scope after telemetry opt-in");
+        }
+    }
 
     if !old.disclaimer_acknowledged && new.disclaimer_acknowledged {
         // Spawn auto project setup as background task to avoid blocking config response

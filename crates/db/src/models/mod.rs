@@ -10,6 +10,7 @@ pub mod project_repo;
 pub mod repo;
 pub mod scratch;
 pub mod session;
+pub mod startup_recovery_summary;
 pub mod tag;
 pub mod task;
 pub mod workspace;
