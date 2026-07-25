@@ -1,9 +1,9 @@
 {
-  "name": "vibe-kanban",
+  "name": "agentic-kanban",
   "version": "0.1.8",
   "private": true,
   "bin": {
-    "vibe-kanban": "npx-cli/bin/cli.js"
+    "agentic-kanban": "npx-cli/bin/cli.js"
   },
   "files": [
     "npx-cli/bin/cli.js",

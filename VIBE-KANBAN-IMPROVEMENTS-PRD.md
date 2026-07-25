@@ -1,8 +1,8 @@
-# Vibe-Kanban Improvements PRD
+# Agentic Kanban Improvements PRD
 
 ## Framing
 
-This document is the **fork-and-improve plan** for vibe-kanban. The companion document `AGENT-KANBAN-PRD.md` describes the desired product shape; this document describes how to get there from the current Rust + React codebase without rewriting it.
+This document is the **fork-and-improve plan** for agentic-kanban. The companion document `AGENT-KANBAN-PRD.md` describes the desired product shape; this document describes how to get there from the current Rust + React codebase without rewriting it.
 
 The decision: keep the existing stack (Rust workspace + React/Vite frontend, distributed via npx), and treat the Agent Kanban PRD as a hardening + extension backlog.
 

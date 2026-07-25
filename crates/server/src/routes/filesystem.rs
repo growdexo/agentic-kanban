@@ -38,7 +38,7 @@ async fn filesystem_allowed_roots(deployment: &DeploymentImpl) -> Result<Vec<Pat
     if let Some(workspace_dir) = deployment.config().read().await.workspace_dir.clone() {
         let workspace_dir = utils::path::expand_tilde(&workspace_dir);
         roots.push(workspace_dir.clone());
-        roots.push(workspace_dir.join(".vibe-kanban-workspaces"));
+        roots.push(workspace_dir.join(".agentic-kanban-workspaces"));
     }
 
     roots.extend(

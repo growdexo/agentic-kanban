@@ -1,6 +1,6 @@
 # Remote service
 
-The `remote` crate contains the implementation of the Vibe Kanban hosted API.
+The `remote` crate contains the implementation of the Agentic Kanban hosted API.
 
 ## Prerequisites
 
@@ -33,7 +33,7 @@ docker compose --env-file ../../.env.remote -f docker-compose.yml up --build
 
 Exposes the web UI and API on `http://localhost:3000` (mapped from internal port 8081). The Postgres service is available at `postgres://remote:remote@localhost:5433/remote`.
 
-## Run Vibe Kanban
+## Run Agentic Kanban
 
 To connect the desktop client to your local remote server:
 

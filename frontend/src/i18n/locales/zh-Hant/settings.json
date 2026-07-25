@@ -80,7 +80,7 @@
           "host": {
             "label": "遠端 SSH 主機（選填）",
             "placeholder": "例如：主機名稱或 IP 位址",
-            "helper": "若 Vibe Kanban 在遠端伺服器上執行，請設定此項。設定後，點擊在編輯器中開啟將產生 URL 以透過 SSH 開啟編輯器，而非執行本機指令。"
+            "helper": "若 Agentic Kanban 在遠端伺服器上執行，請設定此項。設定後，點擊在編輯器中開啟將產生 URL 以透過 SSH 開啟編輯器，而非執行本機指令。"
           },
           "user": {
             "label": "遠端 SSH 使用者（選填）",
@@ -150,10 +150,10 @@
         "workspaceDir": {
           "label": "工作區目錄",
           "placeholder": "~/",
-          "helper": "工作區將在此路徑內的 .vibe-kanban-workspaces 子目錄中建立。留空以使用系統預設值。變更需要重新啟動應用程式。",
+          "helper": "工作區將在此路徑內的 .agentic-kanban-workspaces 子目錄中建立。留空以使用系統預設值。變更需要重新啟動應用程式。",
           "browse": "瀏覽",
           "dialogTitle": "選擇工作區目錄",
-          "dialogDescription": "選擇一個目錄。工作區將在其中的 .vibe-kanban-workspaces 子目錄中建立。"
+          "dialogDescription": "選擇一個目錄。工作區將在其中的 .agentic-kanban-workspaces 子目錄中建立。"
         }
       },
       "pullRequests": {
@@ -206,7 +206,7 @@
       },
       "privacy": {
         "title": "隱私",
-        "description": "透過分享匿名使用資料來協助改善 Vibe Kanban。",
+        "description": "透過分享匿名使用資料來協助改善 Agentic Kanban。",
         "telemetry": {
           "label": "啟用遙測",
           "helper": "啟用匿名使用事件追蹤以協助改善應用程式。不會收集提示或專案資訊。"

@@ -1,0 +1,68 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT\n                    id as \"id!: Uuid\",\n                    recovered_at as \"recovered_at!: DateTime<Utc>\",\n                    running_found as \"running_found!: i64\",\n                    reattached_count as \"reattached_count!: i64\",\n                    orphaned_count as \"orphaned_count!: i64\",\n                    reattached_execution_process_ids,\n                    orphaned_execution_process_ids,\n                    created_at as \"created_at!: DateTime<Utc>\",\n                    updated_at as \"updated_at!: DateTime<Utc>\"\n               FROM startup_recovery_summaries\n               WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: Uuid",
+        "ordinal": 0,
+        "type_info": "Blob"
+      },
+      {
+        "name": "recovered_at!: DateTime<Utc>",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "running_found!: i64",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "reattached_count!: i64",
+        "ordinal": 3,
+        "type_info": "Integer"
+      },
+      {
+        "name": "orphaned_count!: i64",
+        "ordinal": 4,
+        "type_info": "Integer"
+      },
+      {
+        "name": "reattached_execution_process_ids",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "orphaned_execution_process_ids",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at!: DateTime<Utc>",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at!: DateTime<Utc>",
+        "ordinal": 8,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "0032277eeacd8dd794bdba8737ce2e3168d0cc9696dcdf36c0a811959243dafc"
+}

@@ -11,7 +11,7 @@ A redesigned Settings experience is available in <Badge color="orange">Beta</Bad
 You can configure application-wide settings via the **Settings** page. To access it, click the ⚙️ icon in the sidebar or select "Settings" from the top-right menu.
 
 <Frame>
-<img src="/images/vk-settings.png" alt="Vibe Kanban global settings page showing theme options, agent configuration, and settings" />
+<img src="/images/vk-settings.png" alt="Agentic Kanban global settings page showing theme options, agent configuration, and settings" />
 </Frame>
 
 ## Themes
@@ -46,17 +46,17 @@ Choose from various supported editors:
 ### Remote SSH Configuration
 
 <Frame>
-<img src="/images/vk-editor-ssh.png" alt="Vibe Kanban settings editor section showing ssh configuration options." />
+<img src="/images/vk-editor-ssh.png" alt="Agentic Kanban settings editor section showing ssh configuration options." />
 </Frame>
 
-When running Vibe Kanban on a remote server (e.g., accessed via Cloudflare tunnel, ngrok, or as a systemctl service), you can configure VSCode-based editors to open projects via SSH instead of assuming localhost.
+When running Agentic Kanban on a remote server (e.g., accessed via Cloudflare tunnel, ngrok, or as a systemctl service), you can configure VSCode-based editors to open projects via SSH instead of assuming localhost.
 
 This feature is available for **VS Code**, **Cursor**, and **Windsurf** editors.
 
 #### When to Use Remote SSH
 
 Enable remote SSH configuration when:
-- Vibe Kanban runs on a remote server (VPS, cloud instance, etc.)
+- Agentic Kanban runs on a remote server (VPS, cloud instance, etc.)
 - You access the web UI through a tunnel or reverse proxy
 - Your code files are on a different machine than your browser
 - You want your local editor to connect to the remote server via SSH
@@ -107,7 +107,7 @@ Toggle sound effects and push notifications to stay informed about task status c
 
 ## Telemetry
 
-Telemetry is disabled by default. You can opt in to telemetry data collection to help improve Vibe Kanban.
+Telemetry is disabled by default. You can opt in to telemetry data collection to help improve Agentic Kanban.
 
 Self-hosted or forked builds only send telemetry after you opt in and configure your own telemetry project settings. Backend PostHog uses the runtime `POSTHOG_API_KEY` and `POSTHOG_API_ENDPOINT` environment variables. Backend Sentry uses `VIBE_KANBAN_BACKEND_SENTRY_DSN` or `SENTRY_DSN`. Frontend telemetry uses `VITE_POSTHOG_API_KEY`, `VITE_POSTHOG_API_ENDPOINT`, and `VITE_SENTRY_DSN` at build time.
 

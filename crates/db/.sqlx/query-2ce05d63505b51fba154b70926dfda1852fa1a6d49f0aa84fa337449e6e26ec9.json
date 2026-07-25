@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE execution_processes\n               SET status = $1,\n                   exit_code = $2,\n                   completed_at = $3,\n                   recovery_reason = $4,\n                   updated_at = $5\n               WHERE id = $6",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "2ce05d63505b51fba154b70926dfda1852fa1a6d49f0aa84fa337449e6e26ec9"
+}

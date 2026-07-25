@@ -328,7 +328,7 @@ export default function ReviewPage() {
             Generate AI-powered code reviews for your pull requests
           </p>
           <code className="inline-block bg-secondary px-3 py-2 rounded-md text-sm font-mono text-foreground">
-            npx vibe-kanban review https://github.com/owner/repo/pull/123
+            npx agentic-kanban review https://github.com/owner/repo/pull/123
           </code>
         </div>
       </div>

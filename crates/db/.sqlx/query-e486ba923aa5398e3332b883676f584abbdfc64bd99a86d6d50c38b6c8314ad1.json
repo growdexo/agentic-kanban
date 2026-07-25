@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE execution_processes\n               SET os_pid = $1,\n                   process_group_id = $2,\n                   command_snapshot = $3,\n                   argv_snapshot = $4,\n                   updated_at = $5\n               WHERE id = $6",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "e486ba923aa5398e3332b883676f584abbdfc64bd99a86d6d50c38b6c8314ad1"
+}

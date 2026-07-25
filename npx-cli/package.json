@@ -1,19 +1,23 @@
 {
-  "name": "vibe-kanban",
+  "name": "agentic-kanban",
   "private": false,
   "version": "0.1.8",
   "main": "index.js",
   "bin": {
-    "vibe-kanban": "bin/cli.js"
+    "agentic-kanban": "bin/cli.js"
   },
   "keywords": [],
-  "author": "bloop",
+  "author": "growdexo",
   "repository": {
     "type": "git",
-    "url": "https://github.com/BloopAI/vibe-kanban"
+    "url": "https://github.com/growdexo/agentic-kanban"
   },
-  "license": "",
-  "description": "NPX wrapper around vibe-kanban and vibe-kanban-mcp",
+  "homepage": "https://github.com/growdexo/agentic-kanban#readme",
+  "bugs": {
+    "url": "https://github.com/growdexo/agentic-kanban/issues"
+  },
+  "license": "Apache-2.0",
+  "description": "NPX wrapper around agentic-kanban and agentic-kanban-mcp",
   "dependencies": {
     "adm-zip": "^0.5.16"
   },

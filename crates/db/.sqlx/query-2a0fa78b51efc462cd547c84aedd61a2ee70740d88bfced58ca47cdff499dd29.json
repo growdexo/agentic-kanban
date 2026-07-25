@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO startup_recovery_summaries (\n                    id,\n                    recovered_at,\n                    running_found,\n                    reattached_count,\n                    orphaned_count,\n                    reattached_execution_process_ids,\n                    orphaned_execution_process_ids,\n                    created_at,\n                    updated_at\n                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "2a0fa78b51efc462cd547c84aedd61a2ee70740d88bfced58ca47cdff499dd29"
+}
