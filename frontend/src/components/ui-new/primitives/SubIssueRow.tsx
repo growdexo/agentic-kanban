@@ -86,6 +86,7 @@ export function SubIssueRow({
         <div
           ref={provided.innerRef}
           {...provided.draggableProps}
+          style={{ ...provided.draggableProps.style }}
           role={onClick ? 'button' : undefined}
           tabIndex={onClick ? 0 : undefined}
           onClick={onClick}

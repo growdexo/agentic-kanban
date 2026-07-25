@@ -108,6 +108,7 @@ export const KanbanCard = ({
             ref={setRefs}
             {...provided.draggableProps}
             {...provided.dragHandleProps}
+            style={{ ...provided.draggableProps.style }}
             tabIndex={tabIndex}
             onClick={onClick}
             onKeyDown={onKeyDown}

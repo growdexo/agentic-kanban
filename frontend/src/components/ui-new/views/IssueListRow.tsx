@@ -68,6 +68,7 @@ export function IssueListRow({
         <div
           ref={provided.innerRef}
           {...provided.draggableProps}
+          style={{ ...provided.draggableProps.style }}
           role="button"
           tabIndex={0}
           onClick={onClick}

@@ -100,6 +100,11 @@ export function transformDiffToFileDiffMetadata(
       hunks: [],
       splitLineCount: 0,
       unifiedLineCount: 0,
+      // Content was omitted, so the line arrays cannot stand in for full file
+      // contents and hunk expansion must stay disabled.
+      isPartial: true,
+      deletionLines: [],
+      additionLines: [],
     };
   }
 

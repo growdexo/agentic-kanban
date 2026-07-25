@@ -171,8 +171,10 @@ mod tests {
 
     #[test]
     fn migrating_v7_without_explicit_analytics_opt_in_disables_analytics() {
-        let mut old_config = v7::Config::default();
-        old_config.analytics_enabled = None;
+        let old_config = v7::Config {
+            analytics_enabled: None,
+            ..Default::default()
+        };
 
         let migrated = Config::from_v7_config(old_config);
 
@@ -181,12 +183,16 @@ mod tests {
 
     #[test]
     fn migrating_v7_preserves_explicit_analytics_choice() {
-        let mut opted_in = v7::Config::default();
-        opted_in.analytics_enabled = Some(true);
+        let opted_in = v7::Config {
+            analytics_enabled: Some(true),
+            ..Default::default()
+        };
         assert!(Config::from_v7_config(opted_in).analytics_enabled);
 
-        let mut opted_out = v7::Config::default();
-        opted_out.analytics_enabled = Some(false);
+        let opted_out = v7::Config {
+            analytics_enabled: Some(false),
+            ..Default::default()
+        };
         assert!(!Config::from_v7_config(opted_out).analytics_enabled);
     }
 }
